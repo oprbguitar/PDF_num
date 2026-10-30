@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="es-PE">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF Studio — Editor</title>
+  <link rel="icon" href="icons/icon-32.png">
+  <link rel="stylesheet" href="styles/tokens.css">
+  <link rel="stylesheet" href="styles/app.css">
+  <link rel="stylesheet" href="styles/editor.css">
+</head>
+<body class="editor">
+  <header class="cmdbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-text">PDF Studio</span></div>
+    <button class="btn" id="btn-open" title="Abrir PDF (Ctrl+O)">Abrir PDF</button>
+    <input type="file" id="file-input" accept="application/pdf,.pdf" multiple hidden>
+    <div class="seg" role="tablist" aria-label="Modo de trabajo">
+      <button role="tab" id="tab-organize" aria-selected="true" aria-controls="view-organize" data-mode="organize">Organizar</button>
+      <button role="tab" id="tab-edit" aria-selected="false" aria-controls="view-edit" data-mode="edit">Editar</button>
+      <button role="tab" id="tab-folio" aria-selected="false" aria-controls="view-folio" data-mode="folio">Foliar</button>
+    </div>
+    <span class="cmd-meta" id="meta" aria-live="polite">0 páginas · ≈ 0 KB</span>
+    <div class="cmd-group">
+      <button class="btn" id="btn-undo" title="Deshacer (Ctrl+Z)" disabled>Deshacer</button>
+      <button class="btn" id="btn-redo" title="Rehacer (Ctrl+Y)" disabled>Rehacer</button>
+    </div>
+    <button class="btn primary" id="btn-export" title="Exportar una copia (Ctrl+S)" disabled>Exportar PDF</button>
+  </header>
+
+  <div class="workspace">
+    <aside class="library" aria-labelledby="lib-title">
+      <div class="rail-head">
+        <h2 id="lib-title">Biblioteca</h2>
+        <span class="mono muted" id="lib-count">0</span>
+      </div>
+      <ul class="file-list" id="file-list" role="listbox" aria-label="Documentos cargados"></ul>
+      <div class="library-drop">Arrastra PDF aquí o al área central. Los archivos no salen de tu equipo.</div>
+      <div class="library-foot">
+        <label class="field"><span>Al añadir archivos</span>
+          <select id="insert-mode">
+            <option value="end">Agregar al final</option>
+            <option value="after">Insertar tras la selección</option>
+          </select>
+        </label>
+        <button class="btn danger" id="btn-clear" disabled>Vaciar biblioteca</button>
+      </div>
+    </aside>
+
+    <main class="stage" id="stage">
+      <!-- Organizar -->
+      <section id="view-organize" role="tabpanel" aria-labelledby="tab-organize">
+        <div class="stage-bar">
+          <span id="sel-info">Sin selección</span>
+          <span class="spacer"></span>
+          <button class="btn ghost" id="btn-select-all">Seleccionar todo <span class="kbd">Ctrl+A</span></button>
+          <label class="field inline"><span>Tamaño</span>
+            <input type="range" id="zoom" min="96" max="240" step="8" value="132" aria-label="Tamaño de miniaturas">
+          </label>
+        </div>
+        <div class="empty" id="empty">
+          <h1>Organiza, edita y folia tus PDF sin subirlos a ningún servidor</h1>
+          <ol>
+            <li>Abre o arrastra uno o varios PDF.</li>
+            <li>Reordena páginas arrastrándolas; rota, duplica, elimina o inserta páginas en blanco.</li>
+            <li>Añade texto, firmas o marcas en <b>Editar</b> y numera en <b>Foliar</b>.</li>
+            <li>Exporta una copia: los archivos originales no se modifican.</li>
+          </ol>
+          <button class="btn primary" id="btn-open-2">Abrir PDF</button>
+        </div>
+        <div class="page-grid" id="page-grid" role="listbox" aria-multiselectable="true" aria-label="Páginas del documento final"></div>
+      </section>
+
+      <!-- Editar -->
+      <section id="view-edit" role="tabpanel" aria-labelledby="tab-edit" hidden>
+        <div class="stage-bar">
+          <button class="btn ghost" id="btn-prev" title="Página anterior (Re Pág)">◀</button>
+          <span class="mono" id="edit-pos">–</span>
+          <button class="btn ghost" id="btn-next" title="Página siguiente (Av Pág)">▶</button>
+          <span class="muted" id="edit-kind"></span>
+          <span class="spacer"></span>
+          <label class="check"><input type="checkbox" id="chk-compare"> Comparar con el original</label>
+          <label class="field inline"><span>Zoom</span>
+            <select id="edit-zoom"><option value="fit">Ajustar</option><option value="0.75">75 %</option><option value="1">100 %</option><option value="1.5">150 %</option><option value="2">200 %</option></select>
+          </label>
+        </div>
+        <div class="edit-layout">
+          <div class="edit-strip" id="edit-strip" aria-label="Páginas"></div>
+          <div class="viewer-wrap" id="viewer-wrap">
+            <div class="viewer-col" id="col-original" hidden>
+              <h3>Original</h3>
+              <div class="viewer"><canvas id="cv-original"></canvas></div>
+            </div>
+            <div class="viewer-col">
+              <h3 id="col-main-title" hidden>Resultado exportado</h3>
+              <div class="viewer" id="viewer">
+                <canvas id="cv-main"></canvas>
+                <div class="overlay" id="overlay" data-tool="select"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Foliar -->
+      <section id="view-folio" role="tabpanel" aria-labelledby="tab-folio" hidden>
+        <div class="stage-bar">
+          <span id="folio-info">Vista previa del resultado foliado</span>
+          <span class="spacer"></span>
+          <button class="btn" id="btn-folio-refresh">Actualizar vista previa</button>
+        </div>
+        <div class="page-grid" id="folio-grid" aria-label="Vista previa foliada"></div>
+      </section>
+    </main>
+
+    <aside class="panel" id="panel" aria-label="Herramientas">
+      <!-- Panel: Organizar -->
+      <div id="panel-organize">
+        <section>
+          <h3>Páginas seleccionadas</h3>
+          <div class="actions">
+            <div class="row">
+              <button class="btn" data-act="rotate-left" title="Rotar a la izquierda (Shift+R)">⟲ Rotar −90°</button>
+              <button class="btn" data-act="rotate-right" title="Rotar a la derecha (R)">⟳ Rotar +90°</button>
+            </div>
+            <div class="row">
+              <button class="btn" data-act="duplicate" title="Duplicar (Ctrl+D)">Duplicar</button>
+              <button class="btn danger" data-act="delete" title="Eliminar (Supr)">Eliminar</button>
+            </div>
+            <div class="row">
+              <button class="btn" data-act="move-start">Mover al inicio</button>
+              <button class="btn" data-act="move-end">Mover al final</button>
+            </div>
+            <button class="btn block" data-act="blank">Insertar página en blanco después</button>
+            <button class="btn block" data-act="extract">Extraer selección como PDF nuevo</button>
+          </div>
+          <p class="muted small">Arrastra las miniaturas para reordenar. Mayús+clic selecciona un rango; Ctrl+clic suma páginas. Alt+← / Alt+→ mueve la selección.</p>
+        </section>
+        <section>
+          <h3>Separar por rangos</h3>
+          <label class="field"><span>Rangos del documento final</span>
+            <input type="text" id="split-ranges" placeholder="1-3, 4-10, 11" autocomplete="off">
+            <span class="hint">Se descarga un PDF por cada rango.</span>
+          </label>
+          <button class="btn" id="btn-split">Separar y descargar</button>
+        </section>
+        <section>
+          <h3>Resultado</h3>
+          <dl class="kv" id="org-summary"></dl>
+        </section>
+      </div>
+
+      <!-- Panel: Editar -->
+      <div id="panel-edit" hidden>
+        <section>
+          <h3>Herramienta</h3>
+          <div class="tools" role="toolbar" aria-label="Herramientas de edición">
+            <button class="tool" data-tool="select" aria-pressed="true">Seleccionar<span class="kbd">V</span></button>
+            <button class="tool" data-tool="text" aria-pressed="false">Texto<span class="kbd">T</span></button>
+            <button class="tool" data-tool="rect" aria-pressed="false">Resaltar<span class="kbd">H</span></button>
+            <button class="tool" data-tool="cover" aria-pressed="false">Tapar<span class="kbd">W</span></button>
+            <button class="tool" data-tool="image" aria-pressed="false">Imagen<span class="kbd">I</span></button>
+            <button class="tool" data-tool="ink" aria-pressed="false">Firma<span class="kbd">F</span></button>
+          </div>
+          <input type="file" id="image-input" accept="image/png,image/jpeg" hidden>
+          <p class="muted small" id="tool-hint">Haz clic en un objeto para moverlo o cambiar sus propiedades.</p>
+        </section>
+        <section id="props" hidden>
+          <h3>Objeto seleccionado</h3>
+          <label class="field" id="prop-text-wrap"><span>Texto</span><textarea id="prop-text"></textarea></label>
+          <div class="row" id="prop-font-wrap">
+            <label class="field"><span>Fuente</span>
+              <select id="prop-font">
+                <option value="Helvetica">Helvetica</option><option value="Helvetica-Bold">Helvetica negrita</option>
+                <option value="Times-Roman">Times</option><option value="Times-Bold">Times negrita</option>
+                <option value="Courier">Courier</option><option value="Courier-Bold">Courier negrita</option>
+              </select>
+            </label>
+            <label class="field"><span>Tamaño (pt)</span><input type="number" id="prop-size" min="4" max="96" step="1"></label>
+          </div>
+          <label class="field" id="prop-color-wrap"><span>Color</span><input type="color" id="prop-color"></label>
+          <button class="btn danger" id="btn-del-obj">Eliminar objeto <span class="kbd">Supr</span></button>
+        </section>
+        <section id="page-kind-box">
+          <h3>Tipo de página</h3>
+          <div class="notice" id="page-kind">–</div>
+        </section>
+        <section>
+          <h3>Reconocimiento de texto (OCR)</h3>
+          <p class="lead">Lee el texto de páginas escaneadas en español, sin conexión. La precisión depende de la calidad del escaneo; revisa el resultado antes de confiar en él.</p>
+          <button class="btn" id="btn-ocr">Reconocer texto de esta página</button>
+          <div id="ocr-box" hidden>
+            <label class="field"><span>Buscar en el texto reconocido</span><input type="text" id="ocr-search" autocomplete="off"></label>
+            <div class="ocr-text" id="ocr-text"></div>
+            <label class="check"><input type="checkbox" id="ocr-embed"> Incrustar como capa de texto invisible para buscar y copiar en el PDF exportado</label>
+          </div>
+        </section>
+        <section id="form-box" hidden>
+          <h3>Formulario de este documento</h3>
+          <div id="form-fields" class="actions"></div>
+          <label class="check"><input type="checkbox" id="form-flatten"> Aplanar al exportar (los campos dejan de ser editables)</label>
+        </section>
+      </div>
+
+      <!-- Panel: Foliar -->
+      <div id="panel-folio" hidden>
+        <section>
+          <label class="check"><input type="checkbox" id="f-enabled"> <b>Incluir foliación al exportar</b></label>
+          <div id="folio-warn"></div>
+        </section>
+        <section>
+          <h3>Formato</h3>
+          <div class="presets" id="presets">
+            <button class="btn" data-preset="simple">1</button>
+            <button class="btn" data-preset="A-001">A-001</button>
+            <button class="btn" data-preset="001-A">001-A</button>
+            <button class="btn" data-preset="FOLIO-001">FOLIO-001</button>
+            <button class="btn" data-preset="bates">Bates</button>
+            <button class="btn" data-preset="num-words">1 - uno</button>
+          </div>
+          <label class="field"><span>Estilo</span><select id="f-format"></select></label>
+          <div class="row-3">
+            <label class="field"><span>Prefijo</span><input type="text" id="f-prefix" autocomplete="off"></label>
+            <label class="field"><span>Sufijo</span><input type="text" id="f-suffix" autocomplete="off"></label>
+            <label class="field"><span>Ceros</span><input type="number" id="f-padding" min="0" max="12"></label>
+          </div>
+          <label class="field"><span>Número inicial</span><input type="number" id="f-start" min="0"></label>
+          <p class="mono" id="f-sample" aria-live="polite"></p>
+        </section>
+        <section>
+          <h3>Posición</h3>
+          <div class="pos-row">
+            <div class="pos-grid" id="pos-grid" role="group" aria-label="Posición del folio">
+              <button data-pos="top-left" aria-label="Superior izquierda"></button>
+              <button data-pos="top-center" aria-label="Superior centro"></button>
+              <button data-pos="top-right" aria-label="Superior derecha"></button>
+              <button data-pos="middle-left" aria-label="Centro izquierda"></button>
+              <button class="void" tabindex="-1" aria-hidden="true"></button>
+              <button data-pos="middle-right" aria-label="Centro derecha"></button>
+              <button data-pos="bottom-left" aria-label="Inferior izquierda"></button>
+              <button data-pos="bottom-center" aria-label="Inferior centro"></button>
+              <button data-pos="bottom-right" aria-label="Inferior derecha"></button>
+            </div>
+            <div class="actions">
+              <label class="field"><span>Margen horiz. (mm)</span><input type="number" id="f-mx" min="0" max="100" step="0.5"></label>
+              <label class="field"><span>Margen vert. (mm)</span><input type="number" id="f-my" min="0" max="100" step="0.5"></label>
+            </div>
+          </div>
+        </section>
+        <section>
+          <h3>Tipografía</h3>
+          <div class="row">
+            <label class="field"><span>Fuente</span>
+              <select id="f-font">
+                <option value="Helvetica">Helvetica</option><option value="Helvetica-Bold">Helvetica negrita</option>
+                <option value="Times-Roman">Times</option><option value="Times-Bold">Times negrita</option>
+                <option value="Courier">Courier</option><option value="Courier-Bold">Courier negrita</option>
+              </select>
+            </label>
+            <label class="field"><span>Tamaño (pt)</span><input type="number" id="f-size" min="4" max="72"></label>
+          </div>
+          <label class="field"><span>Color</span><input type="color" id="f-color"></label>
+          <label class="check"><input type="checkbox" id="f-bg"> Fondo blanco detrás del folio (útil en escaneos)</label>
+        </section>
+        <section>
+          <h3>Páginas</h3>
+          <label class="field"><span>Excluir páginas</span><input type="text" id="f-exclude" placeholder="1, 3-4" autocomplete="off">
+            <span class="hint">Posiciones del documento final, p. ej. la carátula.</span></label>
+          <label class="check"><input type="checkbox" id="f-consume"> Las páginas excluidas consumen número</label>
+          <label class="check"><input type="checkbox" id="f-continuous"> Numeración continua entre documentos</label>
+          <label class="field"><span>Reiniciar en páginas</span><input type="text" id="f-resets" placeholder="12, 30:1" autocomplete="off">
+            <span class="hint">Inicia una sección: «12» vuelve al número inicial; «30:100» empieza en 100.</span></label>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="statusbar">
+    <span class="msg" id="status" role="status" aria-live="polite">Listo. Todo se procesa en este equipo.</span>
+    <div class="progress" id="progress" hidden><i></i></div>
+    <button class="btn" id="btn-cancel" hidden>Cancelar</button>
+  </footer>
+
+  <dialog id="dlg">
+    <form method="dialog">
+      <h2 id="dlg-title"></h2>
+      <div id="dlg-body"></div>
+      <div class="dlg-actions">
+        <button class="btn" value="cancel">Cancelar</button>
+        <button class="btn primary" value="ok" id="dlg-ok">Aceptar</button>
+      </div>
+    </form>
+  </dialog>
+  <script type="module" src="js/editor.js"></script>
+</body>
+</html>

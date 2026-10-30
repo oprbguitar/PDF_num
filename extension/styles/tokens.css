@@ -1,0 +1,70 @@
+/* PDF Studio — tokens de diseño. Ningún valor visual fuera de esta escala. */
+@font-face { font-family: 'Source Sans 3'; font-weight: 400; font-display: swap; src: url('../fonts/source-sans-3-400.woff2') format('woff2'); }
+@font-face { font-family: 'Source Sans 3'; font-weight: 600; font-display: swap; src: url('../fonts/source-sans-3-600.woff2') format('woff2'); }
+@font-face { font-family: 'Source Sans 3'; font-weight: 700; font-display: swap; src: url('../fonts/source-sans-3-700.woff2') format('woff2'); }
+@font-face { font-family: 'Source Code Pro'; font-weight: 400; font-display: swap; src: url('../fonts/source-code-pro-400.woff2') format('woff2'); }
+
+:root {
+  /* color: acero + verde operativo */
+  --ink: #161A1D;
+  --ink-soft: #4A545C;
+  --ink-mute: #66717A;
+  --surface: #F2F4F5;
+  --surface-2: #FFFFFF;
+  --surface-3: #E6EAEC;
+  --desk: #D9DFE2;
+  --line: #CDD3D7;
+  --line-strong: #9AA4AB;
+  --accent: #2F9E44;
+  --accent-strong: #237A35;
+  --accent-ink: #FFFFFF;
+  --accent-hover: #1C6A2C;
+  --accent-press: #165524;
+  --warn-ink: #5C3000;
+  --danger-ink: #7A1515;
+  --ok-ink: #14451F;
+  --info-ink: #0E3F6E;
+  --accent-wash: #E3F4E6;
+  --support: #1971C2;
+  --support-wash: #E7F1FB;
+  --ok: #237A35;
+  --warn: #9A4F00;
+  --warn-wash: #FFF1DE;
+  --danger: #C92A2A;
+  --danger-wash: #FDECEC;
+  --info: #1971C2;
+  --focus: #1971C2;
+
+  /* tipografía */
+  --font-display: 'Source Sans 3', 'Segoe UI', sans-serif;
+  --font-body: 'Source Sans 3', 'Segoe UI', sans-serif;
+  --font-mono: 'Source Code Pro', Consolas, monospace;
+  --fs-h1: 18px;
+  --fs-h2: 15px;
+  --fs-body: 14px;
+  --fs-ui: 13px;
+  --fs-label: 12px;
+  --fs-caption: 11px;
+  --lh-tight: 1.15;
+  --lh-heading: 1.25;
+  --lh-body: 1.5;
+
+  /* espacio y forma */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px;
+  --radius: 2px;
+  --border: 1px;
+  --shadow: none;
+  --ctl-h: 30px;
+  --cmd-h: 48px;
+  --rail-w: 232px;
+  --panel-w: 300px;
+  --thumb-w: 132px;
+
+  /* motion: solo color y borde */
+  --dur: 120ms;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur: 0ms; }
+}

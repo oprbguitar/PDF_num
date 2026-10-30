@@ -1,0 +1,32 @@
+{
+  "name": "pdf-studio",
+  "version": "0.1.0",
+  "description": "Extensión de Chrome para organizar, editar y foliar PDF sin conexión",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "build": "node scripts/build.mjs",
+    "package": "node scripts/build.mjs --zip",
+    "test:e2e": "node test/e2e-extension.mjs"
+  },
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@fontsource/source-code-pro": "^5.3.1",
+    "@fontsource/source-sans-3": "^5.3.1",
+    "@tesseract.js-data/spa": "^1.0.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
+    "tesseract.js": "^5.1.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.2"
+  },
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oprbguitar/PDF_num.git"
+  }
+}
