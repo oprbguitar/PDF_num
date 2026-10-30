@@ -1,70 +1,87 @@
-/* PDF Studio — tokens de diseño. Ningún valor visual fuera de esta escala. */
-@font-face { font-family: 'Source Sans 3'; font-weight: 400; font-display: swap; src: url('../fonts/source-sans-3-400.woff2') format('woff2'); }
-@font-face { font-family: 'Source Sans 3'; font-weight: 600; font-display: swap; src: url('../fonts/source-sans-3-600.woff2') format('woff2'); }
-@font-face { font-family: 'Source Sans 3'; font-weight: 700; font-display: swap; src: url('../fonts/source-sans-3-700.woff2') format('woff2'); }
-@font-face { font-family: 'Source Code Pro'; font-weight: 400; font-display: swap; src: url('../fonts/source-code-pro-400.woff2') format('woff2'); }
+/* PDF Studio 0.2 — tokens. Dirección: minimalista, claro, estilo herramientas de Apple.
+   Ningún valor visual fuera de esta escala. */
+@font-face { font-family: 'Figtree'; font-weight: 400; font-display: swap; src: url('../fonts/figtree-400.woff2') format('woff2'); }
+@font-face { font-family: 'Figtree'; font-weight: 500; font-display: swap; src: url('../fonts/figtree-500.woff2') format('woff2'); }
+@font-face { font-family: 'Figtree'; font-weight: 600; font-display: swap; src: url('../fonts/figtree-600.woff2') format('woff2'); }
 
 :root {
-  /* color: acero + verde operativo */
-  --ink: #161A1D;
-  --ink-soft: #4A545C;
-  --ink-mute: #66717A;
-  --surface: #F2F4F5;
-  --surface-2: #FFFFFF;
-  --surface-3: #E6EAEC;
-  --desk: #D9DFE2;
-  --line: #CDD3D7;
-  --line-strong: #9AA4AB;
-  --accent: #2F9E44;
-  --accent-strong: #237A35;
+  color-scheme: light dark;
+  /* color */
+  --bg: #F5F5F7;
+  --surface: #FFFFFF;
+  --surface-2: #FBFBFD;
+  --canvas: #E8E8ED;
+  --ink: #1D1D1F;
+  --ink-2: #515154;
+  --ink-3: #6E6E73;
+  --line: #D2D2D7;
+  --line-soft: #E5E5EA;
+  --fill: rgba(0, 0, 0, .05);
+  --fill-strong: rgba(0, 0, 0, .09);
+  --accent: #0071E3;
+  --accent-hover: #0077ED;
+  --accent-press: #0062C4;
   --accent-ink: #FFFFFF;
-  --accent-hover: #1C6A2C;
-  --accent-press: #165524;
-  --warn-ink: #5C3000;
-  --danger-ink: #7A1515;
-  --ok-ink: #14451F;
-  --info-ink: #0E3F6E;
-  --accent-wash: #E3F4E6;
-  --support: #1971C2;
-  --support-wash: #E7F1FB;
-  --ok: #237A35;
-  --warn: #9A4F00;
-  --warn-wash: #FFF1DE;
-  --danger: #C92A2A;
-  --danger-wash: #FDECEC;
-  --info: #1971C2;
-  --focus: #1971C2;
+  --accent-wash: #E8F1FC;
+  --accent-text: #0066CC;
+  --ok: #1E7E34;
+  --ok-wash: #E9F6EC;
+  --warn: #9A5300;
+  --warn-wash: #FFF4E5;
+  --danger: #D70015;
+  --danger-wash: #FDEBEC;
+  --focus: rgba(0, 113, 227, .45);
+  --scrim: rgba(0, 0, 0, .28);
+  --glass: rgba(255, 255, 255, .78);
 
   /* tipografía */
-  --font-display: 'Source Sans 3', 'Segoe UI', sans-serif;
-  --font-body: 'Source Sans 3', 'Segoe UI', sans-serif;
-  --font-mono: 'Source Code Pro', Consolas, monospace;
-  --fs-h1: 18px;
+  --font: 'Figtree', 'Segoe UI', sans-serif;
+  --fs-title: 22px;
+  --fs-h1: 17px;
   --fs-h2: 15px;
   --fs-body: 14px;
   --fs-ui: 13px;
-  --fs-label: 12px;
-  --fs-caption: 11px;
-  --lh-tight: 1.15;
-  --lh-heading: 1.25;
+  --fs-small: 12px;
+  --fs-micro: 11px;
+  --lh-tight: 1.2;
   --lh-body: 1.5;
 
-  /* espacio y forma */
-  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px; --sp-7: 48px; --sp-8: 64px;
-  --radius: 2px;
-  --border: 1px;
-  --shadow: none;
-  --ctl-h: 30px;
-  --cmd-h: 48px;
-  --rail-w: 232px;
-  --panel-w: 300px;
+  /* espacio */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-7: 32px; --sp-8: 48px;
+
+  /* forma y elevación */
+  --r-xs: 4px;
+  --r-sm: 7px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+  --hair: 1px;
+  --shadow-page: 0 1px 2px rgba(0, 0, 0, .10), 0 6px 18px rgba(0, 0, 0, .07);
+  --shadow-pop: 0 10px 40px rgba(0, 0, 0, .14), 0 1px 3px rgba(0, 0, 0, .08);
+  --ctl-h: 32px;
+  --bar-h: 52px;
+  --side-w: 248px;
+  --insp-w: 300px;
   --thumb-w: 132px;
 
-  /* motion: solo color y borde */
-  --dur: 120ms;
-  --ease: cubic-bezier(.2, .8, .2, 1);
+  /* movimiento */
+  --dur: 180ms;
+  --dur-slow: 260ms;
+  --ease: cubic-bezier(.25, .1, .25, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1C1C1E; --surface: #2C2C2E; --surface-2: #242426; --canvas: #121214;
+    --ink: #F5F5F7; --ink-2: #C7C7CC; --ink-3: #A1A1A6; --line: #3A3A3C; --line-soft: #333336;
+    --fill: rgba(255, 255, 255, .07); --fill-strong: rgba(255, 255, 255, .12);
+    --accent: #0A84FF; --accent-hover: #3395FF; --accent-press: #0071E3; --accent-wash: #0A2A4A; --accent-text: #4DA3FF;
+    --ok: #30D158; --ok-wash: #12301B; --warn: #FFB340; --warn-wash: #3A2A10; --danger: #FF6961; --danger-wash: #3D1717;
+    --glass: rgba(44, 44, 46, .8); --scrim: rgba(0, 0, 0, .5);
+    --shadow-page: 0 1px 2px rgba(0, 0, 0, .5), 0 6px 18px rgba(0, 0, 0, .35);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  :root { --dur: 0ms; }
+  :root { --dur: 0ms; --dur-slow: 0ms; }
 }

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "PDF Studio — organizar, editar y foliar",
   "short_name": "PDF Studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Combina, reordena, edita y folia PDF sin conexión. Los documentos nunca salen de tu equipo.",
   "default_locale": "es",
   "minimum_chrome_version": "116",

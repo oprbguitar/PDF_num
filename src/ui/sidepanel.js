@@ -28,13 +28,21 @@ async function refresh() {
 }
 
 async function add(list) {
-  const pdfs = [...list].filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-  if (!pdfs.length) { setStatus('Solo se aceptan archivos PDF.', 'error'); return; }
+  const all = [...list];
+  const pdfs = all.filter((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+  const imgs = all.filter((f) => /^image\/(png|jpeg)$/.test(f.type));
+  if (!pdfs.length && !imgs.length) { setStatus('Solo se aceptan PDF, JPG o PNG.', 'error'); return; }
   $('#progress').hidden = false;
+  if (imgs.length) {
+    // Cada imagen se convierte en un PDF de una página.
+    const images = await Promise.all(imgs.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), png: f.type === 'image/png' })));
+    const { pdfs: made } = await jobs.run('images', { images });
+    made.forEach((b, k) => pdfs.push({ name: imgs[k].name.replace(/\.[^.]+$/, '') + '.pdf', size: b.byteLength, bytes: b }));
+  }
   let k = 0;
   for (const f of pdfs) {
     try {
-      const bytes = new Uint8Array(await f.arrayBuffer());
+      const bytes = f.bytes || new Uint8Array(await f.arrayBuffer());
       const { info, fields } = await jobs.run('analyze', { bytes, name: f.name });
       await store.putFile({ id: store.newId(), name: f.name, size: f.size, bytes, info, fields, pageCount: info.pageCount, pendingAdd: true, order: Date.now() + k });
     } catch (err) {

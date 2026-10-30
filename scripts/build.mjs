@@ -19,9 +19,15 @@ mkdirSync(out, { recursive: true });
 cpSync(join(root, 'extension'), out, { recursive: true });
 
 // 2) Fuentes (OFL), pdf.js worker y OCR local
-mkdirSync(join(out, 'fonts'), { recursive: true });
-for (const w of [400, 600, 700]) cpSync(nm(`@fontsource/source-sans-3/files/source-sans-3-latin-${w}-normal.woff2`), join(out, 'fonts', `source-sans-3-${w}.woff2`));
-cpSync(nm('@fontsource/source-code-pro/files/source-code-pro-latin-400-normal.woff2'), join(out, 'fonts', 'source-code-pro-400.woff2'));
+mkdirSync(join(out, 'fonts', 'pdf'), { recursive: true });
+for (const w of [400, 500, 600]) cpSync(nm(`@fontsource/figtree/files/figtree-latin-${w}-normal.woff2`), join(out, 'fonts', `figtree-${w}.woff2`));
+// Fuentes para escribir dentro del PDF, métricamente compatibles con Arial, Times, Courier y Calibri.
+export const PDF_FAMILIES = ['arimo', 'tinos', 'cousine', 'carlito'];
+for (const fam of PDF_FAMILIES) {
+  for (const w of [400, 700]) for (const s of ['normal', 'italic']) {
+    cpSync(nm(`@fontsource/${fam}/files/${fam}-latin-${w}-${s}.woff`), join(out, 'fonts', 'pdf', `${fam}-${w}-${s}.woff`));
+  }
+}
 mkdirSync(join(out, 'vendor', 'tesseract'), { recursive: true });
 cpSync(nm('pdfjs-dist/build/pdf.worker.min.mjs'), join(out, 'vendor', 'pdf.worker.min.mjs'));
 cpSync(nm('tesseract.js/dist/worker.min.js'), join(out, 'vendor', 'tesseract', 'worker.min.js'));
@@ -32,9 +38,10 @@ cpSync(nm('@tesseract.js-data/spa/4.0.0_best_int/spa.traineddata.gz'), join(out,
 mkdirSync(join(out, 'licenses'), { recursive: true });
 for (const [name, file] of [
   ['pdf-lib', 'pdf-lib/LICENSE.md'], ['pdfjs-dist', 'pdfjs-dist/LICENSE'], ['tesseract.js', 'tesseract.js/LICENSE.md'],
-  ['tesseract.js-core', 'tesseract.js-core/LICENSE'], ['source-sans-3', '@fontsource/source-sans-3/LICENSE'],
-  ['source-code-pro', '@fontsource/source-code-pro/LICENSE'],
-]) cpSync(nm(file), join(out, 'licenses', `${name}.txt`));
+  ['tesseract.js-core', 'tesseract.js-core/LICENSE'], ['pdf-lib-fontkit', '@pdf-lib/fontkit/LICENSE'],
+  ['figtree', '@fontsource/figtree/LICENSE'], ['arimo', '@fontsource/arimo/LICENSE'], ['tinos', '@fontsource/tinos/LICENSE'],
+  ['cousine', '@fontsource/cousine/LICENSE'], ['carlito', '@fontsource/carlito/LICENSE'],
+]) if (existsSync(nm(file))) cpSync(nm(file), join(out, 'licenses', `${name}.txt`));
 cpSync(join(root, 'LICENSE'), join(out, 'licenses', 'pdf-studio.txt'));
 cpSync(join(root, 'THIRD_PARTY_NOTICES.md'), join(out, 'licenses', 'THIRD_PARTY_NOTICES.md'));
 

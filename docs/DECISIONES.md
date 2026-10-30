@@ -27,7 +27,8 @@ y por qué, y qué está verificado frente a lo que queda como limitación.
 | Números en letras (1 - uno) | **Desarrollar** | — | No existe en ninguna de las fuentes. Incluye apócope ("veintiún mil", "un millón"). |
 | Foliación visible | **Desarrollar** (`src/core/folio.js`) | pdf-lib | Se estampa como contenido de la página, no como `/PageLabels`. Considera `/Rotate` y `CropBox`. |
 | Editor: texto, imagen, resaltado, tapado, firma manuscrita | **Desarrollar** (`src/core/edit.js`) | pdf-lib | Se dibuja encima del contenido y nunca altera la imagen escaneada. |
-| Editar texto existente | **Descartar en v0.1** | — | Ni pdf-lib ni pdf.js lo hacen con fidelidad comprobable (fuentes subconjunto, codificaciones, maquetación). El encargo pide no simularlo. |
+| Editar texto existente | v0.1: descartado. **v0.2: desarrollado** (`src/core/content.js` + `src/core/textedit.js`) | Enfoque de PDFcraft (`docs/editing-existing-text.md`), reimplementado en JS | Un lector de flujos de contenido localiza cada operador de texto (Tj, TJ, ', ") con su matriz, fuente, ToUnicode, anchos y color. Los trazos se agrupan en líneas y párrafos. Al editar, el operador se sustituye por un desplazamiento equivalente (`[-n] TJ`), así que el glifo desaparece y el resto del texto no se mueve. El texto nuevo se escribe en el mismo origen. Fuente: el programa incrustado (FontFile2 u OpenType) si contiene todos los caracteres (comprobado con fontkit); si no, Arimo, Tinos, Cousine o Carlito, métricamente compatibles. |
+| Editar texto de escaneos | **Desarrollar** | Enfoque de PDFcraft (tapar con color del papel y escribir con el de la tinta) | Las líneas OCR se agrupan por altura. Los colores se muestrean del propio render (mediana del borde y percentil oscuro del interior). Las capas invisibles de otros programas (modo de render 3) se editan igual. |
 | Rellenar formularios | **Reutilizar** | pdf-lib (AcroForm) | Fiel y comprobado reabriendo el resultado. |
 | OCR | **Reutilizar** | tesseract.js + `spa` (tessdata_best_int) | El OCR de PDFcraft (`ocrs`) no lee tildes. tesseract.js ofrece español y funciona sin conexión empaquetado. |
 | Historial deshacer/rehacer | **Adaptar** el modelo | PDFcraft `crates/engine` (concepto) | Instantáneas del espacio de trabajo (páginas, objetos, formulario, foliación). Las imágenes se guardan aparte. |
@@ -40,6 +41,8 @@ y por qué, y qué está verificado frente a lo que queda como limitación.
 ```
 extension/            Estáticos: manifest MV3, HTML, CSS con tokens
 src/core/             Núcleo sin interfaz, ejecutable en Node y en el navegador
+  content.js          Lector de flujos de contenido (operadores con posición exacta en bytes)
+  textedit.js         Párrafos editables, borrado real de glifos y reescritura con fuente adecuada
   numerals.js         Romanos, alfabéticos, palabras en español
   geometry.js         Coordenadas visuales ↔ espacio de usuario (/Rotate, CropBox)
   organize.js         Combinar y organizar, reconstrucción de AcroForm, rangos
@@ -62,26 +65,29 @@ Para añadir una herramienta nueva: se crea un módulo en `src/core/` (función 
 `PDFDocument`), se añade un paso en `pipeline.js` y su panel en la interfaz. No hace falta
 reconstruir nada más.
 
-## 4. Verificado frente a limitaciones
+## 4. Verificado frente a limitaciones (v0.2.0)
 
-**Verificado con pruebas automatizadas** (`npm test`, 32 pruebas, y `npm run test:e2e` con la extensión real cargada en Chromium):
+**Verificado con pruebas automatizadas** (`npm test`, 41 pruebas, y `npm run test:e2e` con la extensión real cargada en Chromium):
 
+- **Edición del texto existente** en un PDF real generado por Chromium (TrueType subconjunto, ToUnicode): detecta título, fecha, párrafo de 3 líneas y firma. Al corregir, el texto original deja de existir en el PDF (comprobado extrayendo el texto con pdf.js), el nuevo aparece en el mismo origen, el párrafo más largo se reparte en líneas y el resto de la página no se mueve.
+- Fuente estándar sin `/Widths` (métricas AFM), texto girado 90° conservando color, TrueType incrustado reutilizado cuando alcanza (Type0/Identity-H), capa OCR invisible (modo 3) tapada y reescrita visible.
+- Una página duplicada y editada no altera su copia: los flujos se reescriben como objetos nuevos. Si el documento cambió, la edición se rechaza con un mensaje claro.
 - Combinar documentos de distintos tamaños; reordenar, rotar, duplicar, insertar páginas en blanco, extraer y separar.
-- Foliación visible (superior izquierda, superior derecha e inferior centro), comprobada leyendo la posición con pdf.js para `/Rotate` 0/90/180/270, CropBox desplazado y contenido que deja la matriz de transformación sin restaurar. Las demás posiciones usan la misma fórmula.
-- Todos los formatos (arábigos, romanos, alfabéticos, mixtos, Bates, número y letras) con exclusiones, reinicios y numeración por documento.
-- Texto con tildes (WinAnsi), resaltado, tapado, imagen, firma manuscrita y capa OCR exportados y reabiertos.
+- Foliación visible comprobada leyendo la posición con pdf.js para `/Rotate` 0/90/180/270, CropBox desplazado y contenido con la matriz de transformación sin restaurar.
+- Todos los formatos de folio con exclusiones, reinicios y numeración por documento.
 - Formularios: se conservan al combinar, los nombres duplicados se renombran, se rellenan y opcionalmente se aplanan.
-- PDF firmado real: se advierte que la firma digital se invalidará. Un PDF cifrado se reconoce y no se modifica. Los datos que no son PDF se rechazan con un mensaje claro.
-- Cancelación de exportación.
-- Extensión real (E2E): carga MV3, añadir PDFs, organizar, editar, rellenar formulario, foliar, exportar, reabrir y verificar folios A-001…A-006, OCR sin conexión, biblioteca compartida con el panel lateral y consola sin errores.
+- PDF firmado real (aviso), PDF cifrado (solo lectura), datos que no son PDF (mensaje claro) y cancelación de exportación.
+- **E2E con la extensión real**: recorrido inicial (saltar); abrir 4 PDF y una imagen PNG; rotar y mover con el teclado; corregir el párrafo y la fecha de la carta en la propia página; añadir texto con «º» y «·»; rellenar formulario; ayuda contextual con F1, búsqueda y estado sin resultados; foliar A-001…A-008; exportar y verificar que el texto original ya no está, que el corregido sí, que el resto se conserva y que el formulario mantiene su valor. Además, en un escaneo real (captura PNG de texto impreso): OCR en español sin conexión, reconocimiento exacto de la línea, corrección («2041» → «2042») y verificación en el PDF exportado. Panel lateral con la biblioteca compartida y consola sin errores.
 
 **Limitaciones conocidas**
 
-- No se edita el texto existente de PDFs digitales. Lo añadido se dibuja encima. «Tapar» es visual: el contenido sigue dentro del PDF y **no es una censura segura**.
+- La corrección trabaja por párrafo: el formato mixto (una palabra en negrita) se unifica con el estilo de su primer trazo. Las tablas complejas pueden detectarse como líneas sueltas.
+- No se editan: fuentes Type0 sin ToUnicode, texto vertical, ni texto dentro de XObjects de formulario (membretes reutilizados). La interfaz los marca en rojo y explica la alternativa.
+- Si la fuente original es un subconjunto sin las letras nuevas, se usa una fuente equivalente de igual métrica, no la original.
+- En escaneos, la corrección tapa con un color plano: la imagen original sigue debajo del recuadro.
+- «Tapar» es visual y **no es una censura segura**. Para eliminar texto digital usa «Editar texto».
 - Los PDF cifrados (incluidos los que solo tienen contraseña de propietario) no se pueden modificar.
-- Al combinar se pierden marcadores (índice), JavaScript de documento y formularios XFA. Se avisa al cargar el archivo.
-- Las firmas digitales quedan invalidadas al modificar cualquier página (comportamiento inherente al PDF).
-- Las fuentes del folio y del texto añadido son las 14 estándar (Helvetica, Times, Courier). Caracteres fuera de Latin-1 se sustituyen por «?».
-- El OCR depende de la calidad del escaneo. La capa de texto invisible es aproximada por palabra: sirve para buscar y copiar, no para maquetación.
-- La detección de foliación previa solo funciona en páginas con texto extraíble.
+- Al combinar se pierden marcadores, JavaScript de documento y formularios XFA. Se avisa al cargar el archivo.
+- Las firmas digitales quedan invalidadas al modificar cualquier página.
+- El folio usa las 14 fuentes estándar (Latin-1). El texto añadido y el corregido admiten Unicode completo.
 - Todo se procesa en memoria del navegador. Documentos de cientos de MB pueden agotarla.

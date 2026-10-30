@@ -6,6 +6,7 @@ import { recognize, terminateOcr } from './ocr.js';
 import { DEFAULT_FOLIO, FORMATS, PRESETS, computeLabels } from '../core/folio.js';
 import { detectExistingFolio, looksScanned } from '../core/inspect.js';
 import { docStarts } from '../core/pipeline.js';
+import { initHelp, initTour, maybeStartTour, startTour } from './help.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -21,7 +22,7 @@ const S = {
   focusUid: null,
   mode: 'organize',
   editIndex: 0,
-  tool: 'select',
+  tool: 'edittext',
   selObj: null,
   inkObj: null,
   busy: false,
@@ -88,10 +89,17 @@ function afterChange() {
 }
 
 // ---------------------------------------------------------------- estado / progreso
+// Aviso flotante: se oculta solo, salvo errores y trabajos en curso.
+let toastTimer;
 function setStatus(msg, kind = '') {
   const el = $('#status');
   el.textContent = msg;
   el.className = `msg ${kind}`;
+  const toast = $('#toast');
+  toast.classList.toggle('error', kind === 'error');
+  toast.classList.toggle('show', Boolean(msg));
+  clearTimeout(toastTimer);
+  if (!S.busy) toastTimer = setTimeout(() => toast.classList.remove('show'), kind === 'error' ? 7000 : 3200);
 }
 function busy(on, msg) {
   S.busy = on;
@@ -101,24 +109,48 @@ function busy(on, msg) {
   $('#btn-export').disabled = on || !S.ws.pages.length;
   $('#btn-export').classList.toggle('is-loading', on);
   if (msg) setStatus(msg);
+  else if (!on) { clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').classList.remove('show'), 2500); }
 }
 const progress = (f) => { $('#progress > i').style.width = `${Math.round(f * 100)}%`; };
 
 // ---------------------------------------------------------------- archivos
 const isPdf = (f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+const isImage = (f) => /^image\/(png|jpeg|webp)$/.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
+
+// Las imágenes se convierten en PDF de una página (PNG/JPG directo; WebP vía PNG).
+async function imagesToPdfFiles(images) {
+  const prepared = [];
+  for (const f of images) {
+    let bytes = new Uint8Array(await f.arrayBuffer());
+    let png = bytes[0] === 0x89 && bytes[1] === 0x50;
+    const jpg = bytes[0] === 0xFF && bytes[1] === 0xD8;
+    if (!png && !jpg) {
+      const bmp = await createImageBitmap(new Blob([bytes]));
+      const cv = new OffscreenCanvas(bmp.width, bmp.height);
+      cv.getContext('2d').drawImage(bmp, 0, 0);
+      bytes = new Uint8Array(await (await cv.convertToBlob({ type: 'image/png' })).arrayBuffer());
+      png = true;
+    }
+    prepared.push({ bytes, png });
+  }
+  const { pdfs } = await jobs.run('images', { images: prepared });
+  return pdfs.map((b, k) => ({ name: images[k].name.replace(/\.[^.]+$/, '') + '.pdf', size: b.byteLength, bytes: b }));
+}
 
 async function addFiles(fileList, insertAt) {
   const files = [...fileList];
-  const bad = files.filter((f) => !isPdf(f));
-  if (bad.length) setStatus(`Se ignoraron ${bad.length} archivo(s) que no son PDF.`, 'error');
-  const pdfs = files.filter(isPdf);
-  if (!pdfs.length) return;
-  busy(true, `Leyendo ${pdfs.length} archivo(s)…`);
+  const bad = files.filter((f) => !isPdf(f) && !isImage(f));
+  if (bad.length) setStatus(`Se ignoraron ${bad.length} archivo(s): solo se aceptan PDF, JPG, PNG o WebP.`, 'error');
+  const images = files.filter((f) => !isPdf(f) && isImage(f));
+  const pdfs = files.filter(isPdf).map((f) => ({ name: f.name, size: f.size, file: f }));
+  if (!pdfs.length && !images.length) return;
+  busy(true, `Abriendo ${pdfs.length + images.length} archivo(s)…`);
   const newPages = [];
   const warnings = [];
   try {
+    if (images.length) pdfs.push(...await imagesToPdfFiles(images));
     for (const [k, f] of pdfs.entries()) {
-      const bytes = new Uint8Array(await f.arrayBuffer());
+      const bytes = f.bytes || new Uint8Array(await f.file.arrayBuffer());
       const rec = { id: store.newId(), name: f.name, size: f.size, bytes, color: store.tagColor(S.order.length) };
       await registerFile(rec);
       await store.putFile(stripRuntime(rec));
@@ -134,7 +166,7 @@ async function addFiles(fileList, insertAt) {
   insertPages(newPages, insertAt);
   commit();
   if (warnings.length) setStatus(warnings.join(' '), 'error');
-  else setStatus(`${pdfs.length} documento(s) añadidos · ${newPages.length} página(s).`, 'ok');
+  else setStatus(`${pdfs.length} documento(s) abiertos · ${newPages.length} página(s).`, 'ok');
   refreshFolioWarnings();
 }
 
@@ -248,8 +280,12 @@ function estimateSize() {
 
 function renderMeta() {
   const n = S.ws.pages.length;
-  const txt = `${n} página${n === 1 ? '' : 's'} · ≈ ${store.formatBytes(estimateSize())}`;
+  const txt = n ? `${n} página${n === 1 ? '' : 's'} · ≈ ${store.formatBytes(estimateSize())}` : 'Sin documentos';
   $('#meta').textContent = txt;
+  const first = S.order.map((id) => S.files.get(id)).find(Boolean);
+  const name = first ? first.name.replace(/\.pdf$/i, '') : (n ? 'Documento nuevo' : 'PDF Studio');
+  $('#doc-name').textContent = S.order.length > 1 ? `${name} y ${S.order.length - 1} más` : name;
+  document.title = n ? `${name} — PDF Studio` : 'PDF Studio';
   const blanks = S.ws.pages.filter((p) => p.blank).length;
   const rotated = S.ws.pages.filter((p) => p.rotate).length;
   const docs = new Set(S.ws.pages.filter((p) => !p.blank).map((p) => p.src)).size;
@@ -283,10 +319,10 @@ function renderLibrary() {
       <div><p class="file-name">${esc(f.name)}</p>
       <p class="file-meta">${f.pageCount || 0} pág · ${store.formatBytes(f.size)} · ${used} en uso</p>${flags.join('')}</div>
       <div class="file-actions">
-        <button class="icon-btn" data-act="readd" title="Añadir de nuevo sus páginas" aria-label="Añadir de nuevo las páginas de ${esc(f.name)}" ${f.info.encrypted ? 'disabled' : ''}>
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 3v10M3 8h10"/></svg></button>
-        <button class="icon-btn" data-act="remove" title="Quitar de la biblioteca" aria-label="Quitar ${esc(f.name)}">
-          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+        <button class="icon-btn" data-act="readd" title="Añadir otra vez sus páginas" aria-label="Añadir otra vez las páginas de ${esc(f.name)}" ${f.info.encrypted ? 'disabled' : ''}>
+          <svg class="i"><use href="#i-plus"/></svg></button>
+        <button class="icon-btn" data-act="remove" title="Cerrar este documento" aria-label="Cerrar ${esc(f.name)}">
+          <svg class="i"><use href="#i-close"/></svg></button>
       </div>`;
     if (f.info.warnings && f.info.warnings.length) li.title = f.info.warnings.join('\n');
     list.append(li);
@@ -349,7 +385,7 @@ function renderGrid() {
     const t = tileFor(p);
     live.add(p.uid);
     const f = S.files.get(p.src);
-    t.style.setProperty('--src', p.blank ? 'var(--line-strong)' : f?.color);
+    t.style.setProperty('--src', p.blank ? 'var(--ink-3)' : f?.color);
     $('.n', t).textContent = String(i + 1);
     $('.src', t).textContent = p.blank ? 'en blanco' : `${f?.name ?? '?'} · p${p.index + 1}`;
     t.setAttribute('aria-label', `Página ${i + 1}: ${p.blank ? 'en blanco' : `${f?.name} página ${p.index + 1}`}${p.rotate ? `, rotada ${p.rotate}°` : ''}`);
@@ -365,8 +401,8 @@ function renderGrid() {
   grid.replaceChildren(frag);
   for (const uid of [...tiles.keys()]) if (!live.has(uid)) { io.unobserve(tiles.get(uid)); tiles.delete(uid); }
   const n = S.sel.size;
-  $('#sel-info').textContent = n ? `${n} página${n === 1 ? '' : 's'} seleccionada${n === 1 ? '' : 's'}` : 'Sin selección';
-  $$('#panel-organize [data-act]').forEach((b) => { b.disabled = !n; });
+  $('#sel-info').textContent = n ? `${n} página${n === 1 ? '' : 's'}` : 'Sin selección';
+  $('#sel-bar').hidden = !n;
 }
 
 function selectedIndexes() {
@@ -472,6 +508,8 @@ async function rotatePages(list, cw) {
       }
     }
     if (!p.blank) p.rotate = (((p.rotate || 0) + (cw ? 90 : -90)) % 360 + 360) % 360;
+    // El OCR se hizo con la orientación anterior: hay que repetirlo.
+    if (S.ws.ocr[p.uid]) delete S.ws.ocr[p.uid];
   }
   commit();
 }
@@ -537,13 +575,19 @@ function setupDnD() {
   });
   // Soltar fuera del escenario no debe abrir el PDF en la pestaña.
   for (const ev of ['dragover', 'drop']) document.addEventListener(ev, (e) => { if (!stage.contains(e.target)) e.preventDefault(); });
-  $('.library').addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+  $('.sidebar').addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
 }
 
 // ---------------------------------------------------------------- exportación
 function exportState({ folio = true } = {}) {
   const edits = S.ws.edits.map((e) => (e.type === 'image' ? { ...e, bytes: S.ws.images[e.imageId] } : e));
-  for (const [uid, o] of Object.entries(S.ws.ocr)) if (o.embed) edits.push({ pageUid: uid, type: 'ocr', words: o.words });
+  for (const [uid, o] of Object.entries(S.ws.ocr)) {
+    if (!o.embed) continue;
+    // Las palabras de líneas ya corregidas no se duplican en la capa invisible.
+    const fixed = S.ws.edits.filter((e) => e.pageUid === uid && e.type === 'scantext');
+    const inside = (w) => fixed.some((e) => w.x + w.w / 2 > e.x && w.x + w.w / 2 < e.x + e.w && w.y + w.h / 2 > e.y && w.y + w.h / 2 < e.y + e.h);
+    edits.push({ pageUid: uid, type: 'ocr', words: o.words.filter((w) => !inside(w)) });
+  }
   return {
     pages: S.ws.pages.map(({ uid, src, index, rotate, blank }) => (blank ? { uid, blank } : { uid, src, index, rotate })),
     edits,
@@ -670,13 +714,14 @@ async function renderEdit() {
   const compare = $('#chk-compare').checked;
   const zoom = $('#edit-zoom').value;
   const wrap = $('#viewer-wrap');
-  const vk = `${p.uid}|${p.rotate || 0}|${zoom}|${compare}|${wrap.clientWidth}|${compare ? snapshot() : ''}`;
+  const vk = `${p.uid}|${p.rotate || 0}|${zoom}|${compare}|${wrap.clientWidth}|${textEditsKey(p)}|${compare ? snapshot() : ''}`;
   if (vk !== viewKey) {
     viewKey = vk;
     await paintEditPage(p, compare, zoom, wrap);
     if (editPage() !== p) return;
     renderPageKind(p);
     renderFormBox(p);
+    loadBlocks(p);
   }
   renderOverlay();
   renderProps();
@@ -728,7 +773,9 @@ async function paintEditPage(p, compare, zoom, wrap) {
       blankCanvas($('#cv-main'), w, h);
       viewGeom = { ptWidth: p.blank.width, ptHeight: p.blank.height, cssWidth: w, cssHeight: h };
     } else {
-      const o = await render.renderPage(p.src, p.index, { width: zoom === 'fit' ? Math.min(avail, 1100) : undefined, scale, extraRotation: p.rotate || 0 });
+      // Con correcciones de texto se muestra la página ya reescrita (sin el texto original).
+      const key = await previewKey(p);
+      const o = await render.renderPage(key || p.src, key ? 0 : p.index, { width: zoom === 'fit' ? Math.min(avail, 1100) : undefined, scale, extraRotation: p.rotate || 0 });
       if (token !== editToken) return;
       copyCanvas(o.canvas, $('#cv-main'));
       viewGeom = o;
@@ -753,6 +800,193 @@ function blankCanvas(cv, w, h) {
   const ctx = cv.getContext('2d'); ctx.fillStyle = '#FFFFFF'; ctx.fillRect(0, 0, cv.width, cv.height);
 }
 
+// ---------------------------------------------------------------- Editar texto existente
+const textEditsOf = (p) => S.ws.edits.filter((e) => e.pageUid === p.uid && e.type === 'textedit');
+const textEditsKey = (p) => JSON.stringify(textEditsOf(p).map((e) => [e.blockIndex, e.text, e.paper, e.ink]));
+
+// Documento de vista previa con las correcciones aplicadas (caché por página y contenido).
+const previews = new Map(); // uid → { key, docKey }
+let previewSeqN = 0;
+async function previewKey(p) {
+  const edits = textEditsOf(p);
+  if (!edits.length) return null;
+  const k = textEditsKey(p);
+  const hit = previews.get(p.uid);
+  if (hit && hit.key === k) return hit.docKey;
+  const { bytes } = await jobs.run('preview', { src: p.src, bytes: S.files.get(p.src).bytes, index: p.index, edits });
+  const docKey = `pv-${++previewSeqN}`;
+  await render.openDoc(docKey, bytes);
+  if (hit) render.closeDoc(hit.docKey);
+  previews.set(p.uid, { key: k, docKey });
+  return docKey;
+}
+
+// Párrafos del PDF (del documento fuente original) y líneas reconocidas por OCR.
+const blockCache = new Map(); // `${src}|${index}` → Promise<{ blocks }>
+let pageBlocks = { uid: null, list: [] };
+async function loadBlocks(p) {
+  if (p.blank) { pageBlocks = { uid: p.uid, list: [] }; return; }
+  const key = `${p.src}|${p.index}`;
+  if (!blockCache.has(key)) blockCache.set(key, jobs.run('textblocks', { src: p.src, bytes: S.files.get(p.src).bytes, index: p.index }).catch(() => ({ blocks: [] })));
+  const { blocks } = await blockCache.get(key);
+  if (editPage() !== p) return;
+  pageBlocks = { uid: p.uid, list: blocks.map((b) => ({ ...b, kind: 'pdf', box: rotateBox(b.box, p.rotate || 0) })) };
+  renderOverlay();
+}
+
+// Gira una caja normalizada tantas veces 90° como la rotación añadida en Organizar.
+function rotateBox(b, deg) {
+  let r = { ...b };
+  for (let k = 0; k < ((deg / 90) % 4 + 4) % 4; k++) r = { x: 1 - r.y - r.h, y: r.x, w: r.h, h: r.w };
+  return r;
+}
+
+function scanLines(p) {
+  const ocr = S.ws.ocr[p.uid];
+  if (!ocr) return [];
+  const words = [...ocr.words].sort((a, b) => a.y + a.h / 2 - (b.y + b.h / 2));
+  const lines = [];
+  for (const w of words) {
+    const cy = w.y + w.h / 2;
+    const line = lines.find((l) => Math.abs(l.cy - cy) < Math.min(l.h, w.h) * 0.5);
+    if (line) line.words.push(w); else lines.push({ cy, h: w.h, words: [w] });
+  }
+  return lines.map((l, i) => {
+    const ws = l.words.sort((a, b) => a.x - b.x);
+    const x0 = Math.min(...ws.map((w) => w.x)); const y0 = Math.min(...ws.map((w) => w.y));
+    const x1 = Math.max(...ws.map((w) => w.x + w.w)); const y1 = Math.max(...ws.map((w) => w.y + w.h));
+    return { kind: 'scan', index: i, text: ws.map((w) => w.text).join(' '), editable: true, box: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+  });
+}
+
+function currentBlocks(p) {
+  const pdf = pageBlocks.uid === p.uid ? pageBlocks.list : [];
+  return [...pdf, ...scanLines(p)];
+}
+
+function editFor(p, b) {
+  return S.ws.edits.find((e) => e.pageUid === p.uid && (b.kind === 'pdf'
+    ? e.type === 'textedit' && e.blockIndex === b.index
+    : e.type === 'scantext' && e.line === b.index));
+}
+
+const CSS_FAMILY = (font) => (/times|serif|georgia|cambria|garamond|book|roman/i.test(font) ? '"Times New Roman", Tinos, serif'
+  : /courier|mono|consol/i.test(font) ? '"Courier New", Cousine, monospace'
+    : /calibri|carlito/i.test(font) ? 'Calibri, Carlito, sans-serif' : 'Arial, Arimo, Helvetica, sans-serif');
+
+// Color del papel (mediana del borde) y de la tinta (lo más oscuro del interior) en la imagen.
+function sampleColors(box) {
+  const cv = $('#cv-main');
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  const x = Math.max(0, Math.floor(box.x * cv.width) - 3); const y = Math.max(0, Math.floor(box.y * cv.height) - 3);
+  const w = Math.min(cv.width - x, Math.ceil(box.w * cv.width) + 6); const h = Math.min(cv.height - y, Math.ceil(box.h * cv.height) + 6);
+  if (w < 2 || h < 2) return { paper: '#FFFFFF', ink: '#111111' };
+  const data = ctx.getImageData(x, y, w, h).data;
+  const px = (i, j) => { const k = (j * w + i) * 4; return [data[k], data[k + 1], data[k + 2]]; };
+  const border = [];
+  for (let i = 0; i < w; i++) border.push(px(i, 0), px(i, h - 1));
+  for (let j = 0; j < h; j++) border.push(px(0, j), px(w - 1, j));
+  const lum = (c) => c[0] * 0.299 + c[1] * 0.587 + c[2] * 0.114;
+  border.sort((a, b) => lum(a) - lum(b));
+  const paper = border[Math.floor(border.length * 0.6)];
+  const inner = [];
+  for (let j = 3; j < h - 3; j++) for (let i = 3; i < w - 3; i++) inner.push(px(i, j));
+  inner.sort((a, b) => lum(a) - lum(b));
+  const dark = inner.slice(0, Math.max(1, Math.floor(inner.length * 0.08)));
+  const ink = [0, 1, 2].map((c) => Math.round(dark.reduce((s, d) => s + d[c], 0) / dark.length));
+  const hex = (c) => `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+  return { paper: hex(paper), ink: hex(ink) };
+}
+
+let activeEditor = null;
+function openTextEditor(b) {
+  closeTextEditor(false);
+  const p = editPage();
+  if (!b.editable) { setStatus(`Este texto no se puede corregir: ${b.reason}. Usa Tapar y luego Añadir texto.`, 'error'); return; }
+  const prev = editFor(p, b);
+  const scale = viewGeom.cssWidth / viewGeom.ptWidth;
+  const multi = b.kind === 'pdf' && b.lines > 1;
+  const original = multi ? b.text.replace(/-\n/g, '-').replace(/\n/g, ' ') : b.text;
+  const ta = document.createElement('textarea');
+  ta.className = 'text-editor';
+  ta.value = prev ? prev.text : original;
+  ta.spellcheck = true;
+  ta.lang = 'es';
+  ta.setAttribute('aria-label', 'Texto del párrafo');
+  const sizePx = b.kind === 'pdf' ? b.size * scale : b.box.h * viewGeom.cssHeight * 0.78;
+  Object.assign(ta.style, {
+    left: `${b.box.x * 100}%`, top: `${b.box.y * 100}%`,
+    width: `${Math.max(b.box.w * viewGeom.cssWidth + 6, 60)}px`,
+    fontSize: `${sizePx}px`, lineHeight: multi ? `${(b.lead / b.size).toFixed(3)}` : '1.2',
+    fontFamily: b.kind === 'pdf' ? CSS_FAMILY(b.font) : 'Arial, Arimo, sans-serif',
+    color: b.kind === 'pdf' && !b.invisible ? b.color : '#111111',
+    whiteSpace: multi ? 'pre-wrap' : 'pre',
+  });
+  const fit = () => {
+    ta.style.height = 'auto';
+    ta.style.height = `${ta.scrollHeight}px`;
+    if (!multi) { ta.style.width = 'auto'; ta.style.width = `${Math.max(ta.scrollWidth + 4, b.box.w * viewGeom.cssWidth + 6)}px`; }
+  };
+  const hint = document.createElement('div');
+  hint.className = 'edit-hint';
+  hint.innerHTML = `<span>Ctrl+Enter aplica · Esc cancela</span>${prev ? '<button type="button" data-restore>Restaurar original</button>' : ''}`;
+  Object.assign(hint.style, { left: `${b.box.x * 100}%`, top: `calc(${(b.box.y) * 100}% - 28px)` });
+  const ov = $('#overlay');
+  ov.append(ta, hint);
+  activeEditor = { ta, hint, b, page: p, original, multi };
+  fit();
+  ta.addEventListener('input', fit);
+  ta.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); closeTextEditor(false); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); closeTextEditor(true); }
+  });
+  ta.addEventListener('blur', () => setTimeout(() => { if (activeEditor && activeEditor.ta === ta) closeTextEditor(true); }, 120));
+  hint.querySelector('[data-restore]')?.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    S.ws.edits = S.ws.edits.filter((x) => x !== prev);
+    closeTextEditor(false);
+    commit();
+    setStatus('Texto original restaurado.');
+  });
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+function closeTextEditor(save) {
+  if (!activeEditor) return;
+  const { ta, hint, b, page, original } = activeEditor;
+  activeEditor = null;
+  ta.remove();
+  hint.remove();
+  if (!save) return;
+  const text = ta.value.replace(/\s+$/, '');
+  const prev = editFor(page, b);
+  const same = text.replace(/\s+/g, ' ').trim() === original.replace(/\s+/g, ' ').trim();
+  if (same) {
+    if (prev) { S.ws.edits = S.ws.edits.filter((x) => x !== prev); commit(); }
+    return;
+  }
+  if (prev && prev.text === text) return;
+  const colors = b.kind === 'scan' || b.invisible ? sampleColors(b.box) : {};
+  if (b.kind === 'pdf') {
+    const e = prev || { id: store.newId(), pageUid: page.uid, type: 'textedit', blockIndex: b.index, originalText: b.text };
+    Object.assign(e, { text, ...(b.invisible ? colors : {}) });
+    if (!prev) S.ws.edits.push(e);
+  } else {
+    const ptH = viewGeom.ptHeight;
+    const pad = 0.003;
+    const e = prev || { id: store.newId(), pageUid: page.uid, type: 'scantext', line: b.index };
+    Object.assign(e, {
+      text, x: Math.max(0, b.box.x - pad), y: Math.max(0, b.box.y - pad), w: Math.min(1, b.box.w + pad * 2), h: Math.min(1, b.box.h + pad * 2),
+      size: Math.max(4, b.box.h * ptH * 0.78), ...colors,
+    });
+    if (!prev) S.ws.edits.push(e);
+  }
+  commit();
+  setStatus('Texto corregido. Exporta para guardar el PDF con el cambio.', 'ok');
+}
+
 const PREVIEW_FONTS = { Helvetica: 'Arial, Helvetica, sans-serif', Times: '"Times New Roman", Times, serif', Courier: '"Courier New", Courier, monospace' };
 const previewFont = (name) => PREVIEW_FONTS[name.split('-')[0]] || PREVIEW_FONTS.Helvetica;
 
@@ -762,14 +996,31 @@ function renderOverlay() {
   ov.dataset.tool = S.tool;
   if (!p || !viewGeom) { ov.replaceChildren(); return; }
   const scale = viewGeom.cssWidth / viewGeom.ptWidth;
-  const objs = S.ws.edits.filter((e) => e.pageUid === p.uid);
+  const objs = S.ws.edits.filter((e) => e.pageUid === p.uid && e.type !== 'textedit');
+  // Zonas de texto existente que se pueden corregir con un clic.
+  const blockEls = currentBlocks(p).map((b, k) => {
+    const el = document.createElement('div');
+    el.className = `tblock${editFor(p, b) ? ' edited' : ''}${b.editable ? '' : ' locked'}`;
+    el.dataset.k = String(k);
+    el.title = b.editable ? (b.kind === 'scan' ? 'Corregir esta línea del escaneo' : 'Clic para corregir este texto') : `No editable: ${b.reason}`;
+    Object.assign(el.style, { left: `${b.box.x * 100}%`, top: `${b.box.y * 100}%`, width: `${b.box.w * 100}%`, height: `${b.box.h * 100}%` });
+    return el;
+  });
   const els = objs.map((o) => {
     const el = document.createElement('div');
     el.className = `obj ${o.type}${S.selObj === o.id ? ' selected' : ''}`;
     el.dataset.id = o.id;
     el.style.left = `${o.x * 100}%`;
     el.style.top = `${o.y * 100}%`;
-    if (o.type === 'text') {
+    if (o.type === 'scantext') {
+      el.style.width = `${o.w * 100}%`;
+      el.style.height = `${o.h * 100}%`;
+      el.style.background = o.paper || '#FFFFFF';
+      el.style.color = o.ink || '#111111';
+      el.style.fontFamily = 'Arial, Arimo, sans-serif';
+      el.style.fontSize = `${o.size * scale}px`;
+      el.textContent = o.text;
+    } else if (o.type === 'text') {
       el.textContent = o.text;
       el.style.fontFamily = previewFont(o.font);
       el.style.fontWeight = /Bold/.test(o.font) ? '700' : '400';
@@ -810,7 +1061,10 @@ function renderOverlay() {
       els.push(hit);
     }
   }
-  ov.replaceChildren(...els);
+  // El editor abierto no se saca del DOM (perdería el foco y se cerraría).
+  const keep = activeEditor ? [activeEditor.ta, activeEditor.hint] : [];
+  for (const c of [...ov.children]) if (!keep.includes(c)) c.remove();
+  ov.prepend(...els, ...blockEls);
 }
 
 const imageUrls = new Map();
@@ -828,7 +1082,9 @@ function setTool(tool) {
   S.tool = tool;
   if (tool !== 'ink') S.inkObj = null;
   $$('.tool').forEach((b) => b.setAttribute('aria-pressed', b.dataset.tool === tool ? 'true' : 'false'));
+  if (tool !== 'edittext') closeTextEditor(true);
   const hints = {
+    edittext: 'Haz clic en un párrafo para corregirlo. Lo que borres desaparece del PDF y lo nuevo se escribe en su lugar.',
     select: 'Haz clic en un objeto para moverlo o cambiar sus propiedades. Supr lo elimina.',
     text: 'Haz clic en la página donde quieras escribir.',
     rect: 'Arrastra para resaltar una zona (color semitransparente).',
@@ -853,6 +1109,14 @@ function setupOverlay() {
     const p = editPage();
     const box = ov.getBoundingClientRect();
     if (!p || e.button !== 0 || !viewGeom || box.width < 2 || box.height < 2) return;
+    if (S.tool === 'edittext') {
+      if (e.target.closest('.text-editor, .edit-hint')) return;
+      const tb = e.target.closest('.tblock');
+      if (!tb) { closeTextEditor(true); return; }
+      e.preventDefault();
+      openTextEditor(currentBlocks(p)[Number(tb.dataset.k)]);
+      return;
+    }
     const [x, y] = norm(e);
     const objEl = e.target.closest('.obj');
     ov.setPointerCapture(e.pointerId);
@@ -1016,17 +1280,18 @@ async function renderPageKind(p) {
     const t = await render.pageText(p.src, p.index);
     const img = t.chars < 8 ? await render.pageHasImage(p.src, p.index) : false;
     if (editPage() !== p) return;
-    if (looksScanned(t.chars, img)) {
+    const scanned = looksScanned(t.chars, img);
+    $('#btn-ocr').classList.toggle('primary', scanned && !S.ws.ocr[p.uid]);
+    if (scanned) {
       box.className = 'notice warn';
-      box.innerHTML = '<b>Escaneada.</b> Es una imagen sin texto. Puedes añadir texto, firmas, sellos y marcas sin alterar la imagen. Usa OCR para hacerla buscable.';
+      box.innerHTML = S.ws.ocr[p.uid]
+        ? '<b>Escaneada, texto reconocido.</b> Haz clic en una línea para corregirla.'
+        : '<b>Escaneada.</b> Pulsa «Reconocer texto» para poder corregir sus líneas o hacerla buscable.';
     } else if (t.chars === 0) {
-      box.innerHTML = '<b>Sin texto.</b> No tiene texto extraíble.';
-    } else if (t.chars < 8) {
-      box.className = 'notice info';
-      box.innerHTML = `<b>Digital, con poco texto</b> (${t.chars} caracteres). Lo que añadas se dibuja encima del contenido.`;
+      box.innerHTML = '<b>Sin texto.</b> Puedes añadir texto, firmas e imágenes.';
     } else {
       box.className = 'notice info';
-      box.innerHTML = `<b>Digital.</b> Tiene texto seleccionable (${t.chars} caracteres). Lo que añadas se dibuja encima; el texto existente no se reescribe para no romper fuentes ni maquetación.`;
+      box.innerHTML = '<b>Texto editable.</b> Haz clic en cualquier párrafo para corregirlo dentro del PDF.';
     }
   } catch { box.textContent = 'No se pudo analizar la página.'; }
 }
@@ -1036,10 +1301,10 @@ function renderOcrBox() {
   const ocr = p && S.ws.ocr[p.uid];
   $('#btn-ocr').disabled = !p || p.blank || S.busy;
   $('#ocr-box').hidden = !ocr;
+  $('#btn-ocr').lastChild.textContent = ocr ? `Repetir OCR (${ocr.confidence} %)` : 'Reconocer texto (OCR)';
   if (!ocr) return;
   $('#ocr-text').textContent = ocr.text.trim() || '(No se reconoció texto)';
   $('#ocr-embed').checked = Boolean(ocr.embed);
-  $('#btn-ocr').textContent = `Reconocido (confianza media ${ocr.confidence} %) · Repetir`;
 }
 
 async function runOcr() {
@@ -1059,6 +1324,7 @@ async function runOcr() {
     busy(false);
     renderOcrBox();
     renderOverlay();
+    renderPageKind(p);
   }
 }
 
@@ -1301,10 +1567,10 @@ function setupKeys() {
       if (e.key === ' ' && S.focusUid) { e.preventDefault(); clickTile(S.focusUid, { ctrlKey: true }); }
     }
     if (S.mode === 'edit') {
-      const tools = { v: 'select', t: 'text', h: 'rect', w: 'cover', i: 'image', f: 'ink' };
+      const tools = { e: 'edittext', v: 'select', t: 'text', h: 'rect', w: 'cover', i: 'image', f: 'ink' };
       if (!mod && tools[e.key.toLowerCase()]) { setTool(tools[e.key.toLowerCase()]); return; }
       if ((e.key === 'Delete' || e.key === 'Backspace') && S.selObj) { deleteObj(); return; }
-      if (e.key === 'Escape') { S.selObj = null; setTool('select'); renderOverlay(); renderProps(); return; }
+      if (e.key === 'Escape') { S.selObj = null; setTool('edittext'); renderOverlay(); renderProps(); return; }
       if (e.key === 'PageDown' || (e.key === 'ArrowRight' && !S.selObj)) { S.editIndex++; S.selObj = null; renderEdit(); return; }
       if (e.key === 'PageUp' || (e.key === 'ArrowLeft' && !S.selObj)) { S.editIndex--; S.selObj = null; renderEdit(); return; }
       if (S.selObj && e.key.startsWith('Arrow')) {
@@ -1326,6 +1592,20 @@ function wire() {
   const openPicker = () => $('#file-input').click();
   $('#btn-open').addEventListener('click', openPicker);
   $('#btn-open-2').addEventListener('click', openPicker);
+  const newBlank = () => {
+    const b = { uid: `p${S.ws.nextUid++}`, blank: { width: 595.28, height: 841.89 } };
+    insertPages([b]);
+    commit();
+    setStatus('Página A4 en blanco creada. Ve a Editar para escribir o firmar.', 'ok');
+  };
+  $('#btn-new').addEventListener('click', newBlank);
+  $('#btn-new-2').addEventListener('click', newBlank);
+  $('#btn-sidebar').addEventListener('click', () => {
+    const hide = !$('#workspace').classList.toggle('no-side');
+    $('#btn-sidebar').setAttribute('aria-pressed', hide ? 'true' : 'false');
+  });
+  $('#btn-tour-empty').addEventListener('click', startTour);
+  $('#sel-bar').addEventListener('click', (e) => { const b = e.target.closest('[data-act]'); if (b) act(b.dataset.act); });
   $('#file-input').addEventListener('change', (e) => { addFiles(e.target.files); e.target.value = ''; });
   $$('[role="tab"]').forEach((b) => b.addEventListener('click', () => switchMode(b.dataset.mode)));
   $('#btn-undo').addEventListener('click', undo);
@@ -1392,6 +1672,8 @@ function wire() {
 
 async function boot() {
   wire();
+  initHelp({ getModule: () => S.mode });
+  initTour();
   try {
     const [files, saved] = await Promise.all([store.getFiles(), store.loadWorkspace()]);
     const known = files.filter((f) => !f.pendingAdd);
@@ -1412,6 +1694,7 @@ async function boot() {
   const m = /mode=(organize|edit|folio)/.exec(location.hash);
   switchMode(m ? m[1] : 'organize');
   afterChange();
+  maybeStartTour();
 }
 
 boot();

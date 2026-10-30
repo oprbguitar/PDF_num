@@ -2,13 +2,14 @@
 import { PDFDocument } from 'pdf-lib';
 import { buildDocument, saveDocument, loadSource } from './organize.js';
 import { applyEdits, fillForm } from './edit.js';
+import { applyTextEdits } from './textedit.js';
 import { computeLabels, applyFolio } from './folio.js';
 
 // state.pages: [{ uid, src, index, rotate } | { uid, blank }]
 // state.edits: [{ pageUid, type, … }]
 // state.formValues: { idFuente: { nombreCampo: valor } }
 // state.folio: configuración o null
-export async function exportWorkspace(sources, state, { onProgress, signal, flattenForms = false } = {}) {
+export async function exportWorkspace(sources, state, { onProgress, signal, flattenForms = false, fontProvider } = {}) {
   if (!state.pages.length) throw new Error('No hay páginas para exportar.');
   // Los formularios se rellenan sobre una copia en memoria de cada documento fuente,
   // antes de combinar, para que los nombres de campo coincidan con los originales.
@@ -26,7 +27,16 @@ export async function exportWorkspace(sources, state, { onProgress, signal, flat
   const edits = (state.edits || [])
     .filter((e) => indexOf.has(e.pageUid))
     .map((e) => ({ ...e, page: indexOf.get(e.pageUid) }));
-  if (edits.length) await applyEdits(doc, edits);
+  // 1) Texto existente: se borra y reescribe sobre el contenido original de cada página.
+  const byPage = new Map();
+  for (const e of edits.filter((x) => x.type === 'textedit')) {
+    if (!byPage.has(e.page)) byPage.set(e.page, []);
+    byPage.get(e.page).push(e);
+  }
+  for (const [page, list] of byPage) await applyTextEdits(doc, page, list, { fontProvider });
+  // 2) Objetos añadidos encima.
+  const overlay = edits.filter((x) => x.type !== 'textedit');
+  if (overlay.length) await applyEdits(doc, overlay, { fontProvider });
   let labels = null;
   if (state.folio && state.folio.enabled !== false) {
     labels = computeLabels(state.pages.length, state.folio, { docStarts: docStarts(state.pages) });

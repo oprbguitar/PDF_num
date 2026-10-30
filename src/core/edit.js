@@ -2,6 +2,10 @@
 // y valores de formulario sobre un PDFDocument. Las coordenadas de cada objeto son
 // normalizadas (0–1) respecto a la página tal como se ve, origen arriba-izquierda,
 // para que la interfaz pueda trabajar a cualquier zoom.
+import fontkit from '@pdf-lib/fontkit';
+import {
+  pushGraphicsState, popGraphicsState, setTextRenderingMode, TextRenderingMode, setCharacterSpacing,
+} from 'pdf-lib';
 import { StandardFonts, rgb, degrees, PDFTextField, PDFCheckBox, PDFDropdown, PDFRadioGroup, PDFOptionList } from 'pdf-lib';
 import { pageBox, visualSize, visualToUser, hexToRgb01 } from './geometry.js';
 import { FONTS } from './folio.js';
@@ -17,17 +21,37 @@ export function winAnsiSafe(text) {
     .replace(/[^\x20-\x7E\xA0-\xFF\n€]/g, '?');
 }
 
-export async function applyEdits(pdfDoc, edits) {
+const FACE = { Helvetica: 'arimo', Times: 'tinos', Courier: 'cousine' };
+
+export async function applyEdits(pdfDoc, edits, { fontProvider } = {}) {
   const pages = pdfDoc.getPages();
   const fontCache = new Map();
   const font = async (name) => {
     if (!fontCache.has(name)) fontCache.set(name, await pdfDoc.embedFont(FONTS[name] || StandardFonts.Helvetica));
     return fontCache.get(name);
   };
+  // Fuente con Unicode completo (tildes, ñ, €, comillas) si hay proveedor; si no, estándar.
+  const unicodeFont = async (name) => {
+    const family = FACE[name.split('-')[0]] || 'arimo';
+    const bold = /Bold/.test(name);
+    const key = `u:${family}:${bold}`;
+    if (!fontCache.has(key)) {
+      let entry = null;
+      if (fontProvider) {
+        const bytes = await fontProvider({ family, bold, italic: false });
+        if (bytes) {
+          pdfDoc.registerFontkit(fontkit);
+          entry = { font: await pdfDoc.embedFont(bytes, { subset: true }), safe: (t) => t };
+        }
+      }
+      fontCache.set(key, entry || { font: await font(name), safe: winAnsiSafe });
+    }
+    return fontCache.get(key);
+  };
   for (const e of edits) {
     const page = pages[e.page];
     if (!page) throw new Error(`La página ${e.page + 1} no existe.`);
-    if (e.type !== 'ink' && e.type !== 'ocr' && ![e.x, e.y, e.w ?? 0, e.h ?? 0].every(Number.isFinite)) {
+    if (!['ink', 'ocr', 'textedit'].includes(e.type) && ![e.x, e.y, e.w ?? 0, e.h ?? 0].every(Number.isFinite)) {
       throw new Error(`Un objeto de la página ${e.page + 1} tiene una posición no válida. Elimínalo y vuelve a crearlo.`);
     }
     const box = pageBox(page);
@@ -36,10 +60,11 @@ export async function applyEdits(pdfDoc, edits) {
     const r = toVisual(vis, e.x, e.y, e.w, e.h);
     switch (e.type) {
       case 'text': {
-        const f = await font(e.font || 'Helvetica');
+        const uf = await unicodeFont(e.font || 'Helvetica');
+        const f = uf.font;
         const size = Number(e.size) || 12;
         const { r: cr, g, b } = hexToRgb01(e.color || '#000000');
-        const lines = winAnsiSafe(e.text || '').split('\n');
+        const lines = uf.safe(e.text || '').split('\n');
         const lh = size * 1.2;
         const ascent = f.heightAtSize(size, { descender: false });
         lines.forEach((line, k) => {
@@ -94,10 +119,34 @@ export async function applyEdits(pdfDoc, edits) {
           const unit = f.widthOfTextAtSize(text, 1) || 1;
           const size = Math.max(2, Math.min(wr.h * 1.1, wr.w / unit));
           const p = visualToUser(box, rot, wr.u, wr.v + wr.h * 0.2);
-          page.drawText(text, { x: p.x, y: p.y, size, font: f, opacity: 0, rotate: degrees(p.angle) });
+          // Modo de render 3 = invisible: buscable y seleccionable, como las capas OCR estándar.
+          // El espaciado de caracteres estira la palabra hasta el ancho reconocido.
+          const tc = text.length > 1 ? (wr.w - f.widthOfTextAtSize(text, size)) / (text.length - 1) : 0;
+          page.pushOperators(pushGraphicsState(), setTextRenderingMode(TextRenderingMode.Invisible), setCharacterSpacing(tc));
+          page.drawText(text, { x: p.x, y: p.y, size, font: f, rotate: degrees(p.angle) });
+          page.pushOperators(popGraphicsState());
         }
         break;
       }
+      case 'scantext': {
+        // Edición sobre un escaneo: tapa las letras con el color del papel y escribe
+        // el texto nuevo con el color de la tinta (ambos muestreados de la imagen).
+        const paper = hexToRgb01(e.paper || '#FFFFFF');
+        const ink = hexToRgb01(e.ink || '#111111');
+        const c = visualToUser(box, rot, r.u, r.v);
+        page.drawRectangle({ x: c.x, y: c.y, width: r.w, height: r.h, rotate: degrees(c.angle), color: rgb(paper.r, paper.g, paper.b) });
+        const f = await unicodeFont('Helvetica');
+        const size = Number(e.size) || r.h * 0.75;
+        const lines = String(e.text || '').split('\n');
+        const lh = size * 1.2;
+        lines.forEach((line, k) => {
+          const p = visualToUser(box, rot, r.u, vis.height * (1 - e.y) - size * 0.85 - k * lh);
+          page.drawText(f.safe(line), { x: p.x, y: p.y, size, font: f.font, color: rgb(ink.r, ink.g, ink.b), rotate: degrees(p.angle) });
+        });
+        break;
+      }
+      case 'textedit':
+        break; // se aplica antes, sobre el contenido original (ver textedit.js)
       default:
         throw new Error(`Tipo de edición desconocido: ${e.type}`);
     }
